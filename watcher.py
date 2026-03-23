@@ -2,7 +2,7 @@ import json
 import os
 import sys
 import time
-from typing import Optional, List
+from typing import Dict, List, Optional
 
 import requests
 
@@ -46,8 +46,14 @@ def matches_filters(job: dict, filters: dict) -> bool:
     return title_ok and location_ok
 
 
-def safe_get(url: str, params: Optional[dict] = None) -> dict:
-    resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+def safe_get(url: str, params: Optional[dict] = None, headers: Optional[dict] = None):
+    resp = requests.get(url, params=params, headers=headers, timeout=REQUEST_TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def safe_post(url: str, json_body: dict, headers: Optional[dict] = None):
+    resp = requests.post(url, json=json_body, headers=headers, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     return resp.json()
 
@@ -73,9 +79,73 @@ def fetch_greenhouse(source: dict) -> List[dict]:
             "title": item.get("title", ""),
             "location": location,
             "department": department,
-            "url": item.get("absolute_url", "")
+            "url": item.get("absolute_url", ""),
         })
     return jobs
+
+
+def fetch_lever(source: dict) -> List[dict]:
+    company = source["company"]
+    url = f"https://api.lever.co/v0/postings/{company}"
+    data = safe_get(url, params={"mode": "json"})
+
+    jobs = []
+    for item in data:
+        categories = item.get("categories") or {}
+        jobs.append({
+            "source_name": source["name"],
+            "source_type": "lever",
+            "external_id": str(item.get("id")),
+            "title": item.get("text", ""),
+            "location": categories.get("location", ""),
+            "department": categories.get("team", ""),
+            "url": item.get("hostedUrl") or item.get("applyUrl") or "",
+        })
+    return jobs
+
+
+def fetch_ashby(source: dict) -> List[dict]:
+    url = source.get("api_url", "https://api.ashbyhq.com/jobPosting.list")
+    body = {
+        "organizationHostedJobsPageName": source["organization_key"],
+        "listedOnly": True
+    }
+    data = safe_post(url, body)
+
+    jobs = []
+    for item in data.get("results", []):
+        location = ""
+        loc = item.get("location")
+        if isinstance(loc, dict):
+            location = (
+                loc.get("locationSummary")
+                or loc.get("city")
+                or loc.get("region")
+                or loc.get("country")
+                or ""
+            )
+
+        jobs.append({
+            "source_name": source["name"],
+            "source_type": "ashby",
+            "external_id": str(item.get("id") or item.get("jobPostingId") or item.get("title", "")),
+            "title": item.get("title", ""),
+            "location": location,
+            "department": "",
+            "url": item.get("jobUrl") or item.get("applicationUrl") or "",
+        })
+    return jobs
+
+
+def fetch_jobs_for_source(source: dict) -> List[dict]:
+    stype = source["type"].lower()
+    if stype == "greenhouse":
+        return fetch_greenhouse(source)
+    if stype == "lever":
+        return fetch_lever(source)
+    if stype == "ashby":
+        return fetch_ashby(source)
+    raise ValueError(f"Unsupported source type: {stype}")
 
 
 def stable_job_key(job: dict) -> str:
@@ -91,7 +161,7 @@ def format_discord_text(new_jobs: List[dict]) -> str:
     lines = [f"{len(new_jobs)} new matching job(s) found:"]
     for job in new_jobs[:10]:
         lines.append(
-            f"- {job['title']} | {job['source_name']} | {job.get('location','')} | {job['url']}"
+            f"- {job['title']} | {job['source_name']} | {job.get('location', '')} | {job['url']}"
         )
     if len(new_jobs) > 10:
         lines.append(f"...and {len(new_jobs) - 10} more.")
@@ -121,7 +191,7 @@ def main() -> int:
 
     for source in sources:
         try:
-            jobs = fetch_greenhouse(source)
+            jobs = fetch_jobs_for_source(source)
             all_jobs.extend(jobs)
             time.sleep(0.5)
         except Exception as e:
@@ -155,8 +225,6 @@ def main() -> int:
     elif new_jobs:
         print("New jobs found, but DISCORD_WEBHOOK_URL is not configured.")
 
-    if errors and not all_jobs:
-        return 1
     return 0
 
 

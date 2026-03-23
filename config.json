@@ -16,20 +16,9 @@
   },
   "sources": [
     {
-      "name": "OpenAI",
+      "name": "Cascade Financial Services",
       "type": "greenhouse",
-      "board_token": "openai"
-    },
-    {
-      "name": "Example Lever Company",
-      "type": "lever",
-      "company": "lever"
-    },
-    {
-      "name": "Example Ashby Company",
-      "type": "ashby",
-      "api_url": "https://api.ashbyhq.com/jobPosting.list",
-      "organization_key": "your-org-key"
+      "board_token": "cascadeloans"
     }
   ]
 }
