@@ -1,21 +1,24 @@
 {
   "filters": {
     "title_keywords_any": [
-      "software engineer",
-      "backend",
-      "platform",
       "machine learning",
       "data engineer",
       "data scientist",
-      "data analyst"
+      "data architect",
+      "analyst",
+      "data"
     ],
     "locations_any": [
       "remote",
-      "san francisco",
-      "seattle",
+      "usa",
+      "california",
       "new york",
-      "los angeles",
-      "long beach"
+      "seattle",
+      "san francisco"
+    ],
+    "excluded_keywords_any": [
+      "vp",
+      "director"
     ]
   },
   "sources": [
