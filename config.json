@@ -13,7 +13,9 @@
       "remote",
       "san francisco",
       "seattle",
-      "new york"
+      "new york",
+      "los angeles",
+      "long beach"
     ]
   },
   "sources": [
@@ -21,6 +23,12 @@
       "name": "Cascade Financial Services",
       "type": "greenhouse",
       "board_token": "cascadeloans"
+    },
+    {
+     "name": "SCAN Health Plan",
+     "type": "workday",
+     "host": "scanhealthplan.wd108.myworkdayjobs.com",
+     "career_site": "scancareers"
     },
     {
       "name": "Skechers Data Search",
