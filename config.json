@@ -1,6 +1,9 @@
 {
   "filters": {
     "title_keywords_any": [
+      "software engineer",
+      "backend",
+      "platform",
       "machine learning",
       "data engineer",
       "data scientist",
@@ -37,6 +40,12 @@
       "name": "SCAN Careers",
       "type": "workday",
       "url": "https://scanhealthplan.wd108.myworkdayjobs.com/scancareers",
+      "search_text": "data"
+    },
+    {
+      "name": "Santander Careers",
+      "type": "workday",
+      "url": "https://santander.wd3.myworkdayjobs.com/en-US/SantanderCareers",
       "search_text": "data"
     }
   ]
