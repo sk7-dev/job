@@ -225,6 +225,9 @@ def fetch_html_links(source: dict) -> List[dict]:
             "url": full_url,
             "posted_at": "",
         })
+        print(f"{source['name']}: page length = {len(resp.text)}")
+        for a in soup.find_all("a", href=True)[:20]:
+            print("LINK:", a.get("href"))
 
     return jobs
 
