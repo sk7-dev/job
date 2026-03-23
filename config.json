@@ -53,24 +53,10 @@
     },
     {
     "name": "Entertime Careers",
-    "type": "html_links",
-    "url": "https://secure4.entertimeonline.com/ta/6149039.careers?CareersSearch=&lang=en-US",
-    "link_prefix": "https://secure4.entertimeonline.com",
-    "allowed_domains": [
-        "secure4.entertimeonline.com"
-    ],
-    "include_patterns": [
-        "ShowJob",
-        "job",
-        "JobDetails",
-        "careers?"
-    ],
-    "exclude_patterns": [
-        "CareersSearch",
-        "lang=",
-        "javascript:",
-        "#"
-    ]
+    "type": "entertime",
+    "base_url": "https://secure4.entertimeonline.com",
+    "client_path": "/ta/6149039.careers",
+    "lang": "en-US"
     }
   ]
 }

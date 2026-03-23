@@ -3,9 +3,8 @@ import os
 import sys
 import time
 from typing import List, Optional
-from urllib.parse import urlparse
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse, quote
+
 import requests
 
 CONFIG_PATH = "config.json"
@@ -169,67 +168,6 @@ def fetch_ashby(source: dict) -> List[dict]:
         })
     return jobs
 
-def fetch_html_links(source: dict) -> List[dict]:
-    url = source["url"]
-    resp = safe_get(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0 Safari/537.36"
-        },
-    )
-
-    soup = BeautifulSoup(resp.text, "html.parser")
-
-    link_prefix = source.get("link_prefix", url)
-    allowed_domains = set(source.get("allowed_domains", []))
-    include_patterns = [x.lower() for x in source.get("include_patterns", [])]
-    exclude_patterns = [x.lower() for x in source.get("exclude_patterns", [])]
-
-    jobs = []
-    seen = set()
-
-    for a in soup.find_all("a", href=True):
-        href = (a.get("href") or "").strip()
-        text = " ".join(a.get_text(" ", strip=True).split())
-
-        if not href:
-            continue
-
-        full_url = urljoin(link_prefix, href)
-        full_url_lc = full_url.lower()
-
-        if allowed_domains:
-            domain = urlparse(full_url).netloc.lower()
-            if domain not in allowed_domains:
-                continue
-
-        if include_patterns and not any(p in full_url_lc for p in include_patterns):
-            continue
-
-        if exclude_patterns and any(p in full_url_lc for p in exclude_patterns):
-            continue
-
-        if full_url in seen:
-            continue
-        seen.add(full_url)
-
-        title = text or full_url.rsplit("/", 1)[-1]
-
-        jobs.append({
-            "source_name": source["name"],
-            "source_type": "html_links",
-            "external_id": full_url,
-            "title": title,
-            "location": "",
-            "department": "",
-            "url": full_url,
-            "posted_at": "",
-        })
-        print(f"{source['name']}: page length = {len(resp.text)}")
-        for a in soup.find_all("a", href=True)[:20]:
-            print("LINK:", a.get("href"))
-
-    return jobs
 
 def extract_json_object(text: str, marker: str) -> Optional[dict]:
     start = text.find(marker)
@@ -334,10 +272,6 @@ def parse_workday_source(source: dict) -> tuple[str, str, str]:
     if not path_parts:
         raise ValueError("Could not determine Workday site from URL")
 
-    # Handles:
-    # /scancareers
-    # /en-US/scancareers
-    # /fr-FR/site
     if len(path_parts) >= 2 and "-" in path_parts[0]:
         site = path_parts[1]
     else:
@@ -403,12 +337,6 @@ def fetch_workday(source: dict) -> List[dict]:
             "searchText": source.get("search_text", ""),
         }
 
-        # Optional filters
-        if source.get("locations"):
-            body["locations"] = source["locations"]
-        if source.get("categories"):
-            body["jobFamilies"] = source["categories"]
-
         data = safe_post_json(endpoint, body, headers=headers)
 
         postings = (
@@ -466,6 +394,103 @@ def fetch_workday(source: dict) -> List[dict]:
     return jobs
 
 
+def entertime_extract_list(data: dict) -> List[dict]:
+    for key in ("items", "data", "results", "jobs", "requisitions", "jobRequisitions"):
+        value = data.get(key)
+        if isinstance(value, list):
+            return value
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def entertime_pick(item: dict, keys: List[str]) -> str:
+    for key in keys:
+        value = item.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def fetch_entertime(source: dict) -> List[dict]:
+    base_url = source["base_url"].rstrip("/")
+    client_path = source["client_path"].strip("/")
+    lang = source.get("lang", "en-US")
+    size = int(source.get("size", 20))
+
+    endpoint = f"{base_url}/{client_path}/rest/jobs/job-requisitions"
+
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "User-Agent": "Mozilla/5.0",
+        "Referer": f"{base_url}/{client_path}?CareersSearch=&lang={lang}",
+    }
+
+    offset = 1
+    jobs = []
+
+    while True:
+        params = {
+            "offset": offset,
+            "size": size,
+            "sort": source.get("sort", "desc"),
+            "lang": lang,
+        }
+
+        ein_id = source.get("ein_id")
+        if ein_id:
+            params["ein_id"] = ein_id
+
+        data = safe_get_json(endpoint, params=params, headers=headers)
+        items = entertime_extract_list(data)
+
+        if not items:
+            break
+
+        for item in items:
+            title = entertime_pick(item, ["title", "jobTitle", "requisitionTitle", "name"])
+            location = entertime_pick(item, ["location", "locationName", "jobLocation", "cityState"])
+            department = entertime_pick(item, ["category", "department", "jobCategory"])
+
+            req_id = entertime_pick(item, ["id", "jobId", "requisitionId", "jobReqId", "reqId"])
+            external_id = req_id or title
+
+            detail_url = ""
+            slug = entertime_pick(item, ["jobUrl", "url", "jobDetailUrl"])
+            if slug.startswith("http"):
+                detail_url = slug
+            elif slug:
+                detail_url = f"{base_url}{slug}" if slug.startswith("/") else f"{base_url}/{slug}"
+            elif req_id:
+                detail_url = (
+                    f"{base_url}/{client_path}"
+                    f"?jobID={quote(req_id)}&lang={quote(lang)}"
+                )
+            else:
+                detail_url = f"{base_url}/{client_path}?lang={quote(lang)}"
+
+            posted_at = entertime_pick(item, ["postedDate", "datePosted", "createdDate", "updateDate"])
+
+            jobs.append({
+                "source_name": source["name"],
+                "source_type": "entertime",
+                "external_id": str(external_id),
+                "title": title,
+                "location": location,
+                "department": department,
+                "url": detail_url,
+                "posted_at": posted_at,
+            })
+
+        if len(items) < size:
+            break
+
+        offset += size
+        time.sleep(0.2)
+
+    return jobs
+
+
 def fetch_jobs_for_source(source: dict) -> List[dict]:
     stype = source["type"].lower()
     if stype == "greenhouse":
@@ -478,9 +503,10 @@ def fetch_jobs_for_source(source: dict) -> List[dict]:
         return fetch_phenom_embedded(source)
     if stype == "workday":
         return fetch_workday(source)
-    if stype == "html_links":
-        return fetch_html_links(source)
+    if stype == "entertime":
+        return fetch_entertime(source)
     raise ValueError(f"Unsupported source type: {stype}")
+
 
 def stable_job_key(job: dict) -> str:
     return "||".join([
