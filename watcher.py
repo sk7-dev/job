@@ -395,7 +395,7 @@ def fetch_workday(source: dict) -> List[dict]:
 
 
 def entertime_extract_list(data: dict) -> List[dict]:
-    for key in ("items", "data", "results", "jobs", "requisitions", "jobRequisitions"):
+    for key in ("job_requisitions", "items", "data", "results", "jobs", "requisitions", "jobRequisitions"):
         value = data.get(key)
         if isinstance(value, list):
             return value
@@ -412,34 +412,64 @@ def entertime_pick(item: dict, keys: List[str]) -> str:
     return ""
 
 
+def entertime_location(item: dict) -> str:
+    location = item.get("location")
+    if isinstance(location, dict):
+        parts = [
+            location.get("city"),
+            location.get("state"),
+            location.get("country"),
+        ]
+        parts = [str(x).strip() for x in parts if x]
+        if parts:
+            return ", ".join(parts)
+
+        line_parts = [
+            location.get("address_line_1"),
+            location.get("city"),
+            location.get("state"),
+            location.get("zip"),
+            location.get("country"),
+        ]
+        line_parts = [str(x).strip() for x in line_parts if x]
+        if line_parts:
+            return ", ".join(line_parts)
+
+    return entertime_pick(item, ["locationName", "jobLocation", "cityState", "location"])
+
+
 def fetch_entertime(source: dict) -> List[dict]:
     base_url = source["base_url"].rstrip("/")
-    client_path = source["client_path"].strip("/")
+    company_id = source["company_id"]
     lang = source.get("lang", "en-US")
     size = int(source.get("size", 20))
+    sort = source.get("sort", "desc")
 
-    endpoint = f"{base_url}/{client_path}/rest/jobs/job-requisitions"
+    endpoint = f"{base_url}/ta/rest/ui/recruitment/companies/%7C{company_id}/job-requisitions"
 
     headers = {
         "Accept": "application/json, text/plain, */*",
         "User-Agent": "Mozilla/5.0",
-        "Referer": f"{base_url}/{client_path}?CareersSearch=&lang={lang}",
+        "Referer": f"{base_url}/ta/{company_id}.careers?CareersSearch=&lang={lang}",
     }
 
-    offset = 1
+    offset = 0
     jobs = []
 
     while True:
         params = {
+            "_": str(int(time.time() * 1000)),
             "offset": offset,
             "size": size,
-            "sort": source.get("sort", "desc"),
             "lang": lang,
         }
 
         ein_id = source.get("ein_id")
-        if ein_id:
+        if ein_id is not None:
             params["ein_id"] = ein_id
+
+        if sort:
+            params["sort"] = sort
 
         data = safe_get_json(endpoint, params=params, headers=headers)
         items = entertime_extract_list(data)
@@ -448,26 +478,22 @@ def fetch_entertime(source: dict) -> List[dict]:
             break
 
         for item in items:
-            title = entertime_pick(item, ["title", "jobTitle", "requisitionTitle", "name"])
-            location = entertime_pick(item, ["location", "locationName", "jobLocation", "cityState"])
-            department = entertime_pick(item, ["category", "department", "jobCategory"])
+            title = entertime_pick(item, ["job_title", "title", "jobTitle", "requisitionTitle", "name"])
+            location = entertime_location(item)
+            department = ""
+
+            employee_type = item.get("employee_type")
+            if isinstance(employee_type, dict):
+                department = employee_type.get("name", "")
 
             req_id = entertime_pick(item, ["id", "jobId", "requisitionId", "jobReqId", "reqId"])
             external_id = req_id or title
 
-            detail_url = ""
-            slug = entertime_pick(item, ["jobUrl", "url", "jobDetailUrl"])
-            if slug.startswith("http"):
-                detail_url = slug
-            elif slug:
-                detail_url = f"{base_url}{slug}" if slug.startswith("/") else f"{base_url}/{slug}"
-            elif req_id:
-                detail_url = (
-                    f"{base_url}/{client_path}"
-                    f"?jobID={quote(req_id)}&lang={quote(lang)}"
-                )
+            # Common detail URL pattern on this platform
+            if req_id:
+                detail_url = f"{base_url}/ta/rest/ui/recruitment/companies/%7C{company_id}/job-requisitions/{req_id}"
             else:
-                detail_url = f"{base_url}/{client_path}?lang={quote(lang)}"
+                detail_url = f"{base_url}/ta/{company_id}.careers?CareersSearch=&lang={quote(lang)}"
 
             posted_at = entertime_pick(item, ["postedDate", "datePosted", "createdDate", "updateDate"])
 
@@ -489,7 +515,6 @@ def fetch_entertime(source: dict) -> List[dict]:
         time.sleep(0.2)
 
     return jobs
-
 
 def fetch_jobs_for_source(source: dict) -> List[dict]:
     stype = source["type"].lower()
