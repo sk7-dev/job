@@ -21,7 +21,9 @@
     ],
     "excluded_keywords_any": [
       "vp",
-      "director"
+      "director",
+      "senior",
+      "manager"
     ]
   },
   "sources": [
@@ -47,6 +49,27 @@
       "type": "workday",
       "url": "https://santander.wd3.myworkdayjobs.com/en-US/SantanderCareers",
       "search_text": "data"
+    },
+    {
+    "name": "Entertime Careers",
+    "type": "html_links",
+    "url": "https://secure4.entertimeonline.com/ta/6149039.careers?CareersSearch=&lang=en-US",
+    "link_prefix": "https://secure4.entertimeonline.com",
+    "allowed_domains": [
+        "secure4.entertimeonline.com"
+    ],
+    "include_patterns": [
+        "ShowJob",
+        "job",
+        "JobDetails",
+        "careers?"
+    ],
+    "exclude_patterns": [
+        "CareersSearch",
+        "lang=",
+        "javascript:",
+        "#"
+    ]
     }
   ]
 }

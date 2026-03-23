@@ -4,7 +4,8 @@ import sys
 import time
 from typing import List, Optional
 from urllib.parse import urlparse
-
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
 import requests
 
 CONFIG_PATH = "config.json"
@@ -168,6 +169,64 @@ def fetch_ashby(source: dict) -> List[dict]:
         })
     return jobs
 
+def fetch_html_links(source: dict) -> List[dict]:
+    url = source["url"]
+    resp = safe_get(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0 Safari/537.36"
+        },
+    )
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    link_prefix = source.get("link_prefix", url)
+    allowed_domains = set(source.get("allowed_domains", []))
+    include_patterns = [x.lower() for x in source.get("include_patterns", [])]
+    exclude_patterns = [x.lower() for x in source.get("exclude_patterns", [])]
+
+    jobs = []
+    seen = set()
+
+    for a in soup.find_all("a", href=True):
+        href = (a.get("href") or "").strip()
+        text = " ".join(a.get_text(" ", strip=True).split())
+
+        if not href:
+            continue
+
+        full_url = urljoin(link_prefix, href)
+        full_url_lc = full_url.lower()
+
+        if allowed_domains:
+            domain = urlparse(full_url).netloc.lower()
+            if domain not in allowed_domains:
+                continue
+
+        if include_patterns and not any(p in full_url_lc for p in include_patterns):
+            continue
+
+        if exclude_patterns and any(p in full_url_lc for p in exclude_patterns):
+            continue
+
+        if full_url in seen:
+            continue
+        seen.add(full_url)
+
+        title = text or full_url.rsplit("/", 1)[-1]
+
+        jobs.append({
+            "source_name": source["name"],
+            "source_type": "html_links",
+            "external_id": full_url,
+            "title": title,
+            "location": "",
+            "department": "",
+            "url": full_url,
+            "posted_at": "",
+        })
+
+    return jobs
 
 def extract_json_object(text: str, marker: str) -> Optional[dict]:
     start = text.find(marker)
@@ -416,8 +475,9 @@ def fetch_jobs_for_source(source: dict) -> List[dict]:
         return fetch_phenom_embedded(source)
     if stype == "workday":
         return fetch_workday(source)
+    if stype == "html_links":
+        return fetch_html_links(source)
     raise ValueError(f"Unsupported source type: {stype}")
-
 
 def stable_job_key(job: dict) -> str:
     return "||".join([
