@@ -1,0 +1,35 @@
+{
+  "filters": {
+    "title_keywords_any": [
+      "software engineer",
+      "backend",
+      "platform",
+      "machine learning",
+      "data engineer"
+    ],
+    "locations_any": [
+      "remote",
+      "san francisco",
+      "seattle",
+      "new york"
+    ]
+  },
+  "sources": [
+    {
+      "name": "OpenAI",
+      "type": "greenhouse",
+      "board_token": "openai"
+    },
+    {
+      "name": "Example Lever Company",
+      "type": "lever",
+      "company": "lever"
+    },
+    {
+      "name": "Example Ashby Company",
+      "type": "ashby",
+      "api_url": "https://api.ashbyhq.com/jobPosting.list",
+      "organization_key": "your-org-key"
+    }
+  ]
+}
