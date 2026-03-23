@@ -3,10 +3,9 @@ import os
 import sys
 import time
 from typing import List, Optional
-from urllib.parse import urljoin
+from urllib.parse import urlparse
 
 import requests
-from bs4 import BeautifulSoup
 
 CONFIG_PATH = "config.json"
 STATE_PATH = "state_seen.json"
@@ -170,7 +169,47 @@ def fetch_ashby(source: dict) -> List[dict]:
     return jobs
 
 
-def fetch_html_search(source: dict) -> List[dict]:
+def extract_json_object(text: str, marker: str) -> Optional[dict]:
+    start = text.find(marker)
+    if start == -1:
+        return None
+
+    start = text.find("{", start)
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+
+    for i in range(start, len(text)):
+        ch = text[i]
+
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                candidate = text[start:i + 1]
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
+def fetch_phenom_embedded(source: dict) -> List[dict]:
     url = source["url"]
     resp = safe_get(
         url,
@@ -179,41 +218,188 @@ def fetch_html_search(source: dict) -> List[dict]:
         },
     )
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    ddo = extract_json_object(resp.text, "phApp.ddo =")
+    if not ddo:
+        raise ValueError("Could not locate phApp.ddo JSON in page source")
+
+    jobs = (
+        ddo.get("eagerLoadRefineSearch", {})
+           .get("data", {})
+           .get("jobs", [])
+    )
+
+    out = []
+    for item in jobs:
+        title = item.get("title", "")
+        location = (
+            item.get("location")
+            or item.get("cityStateCountry")
+            or item.get("locationName")
+            or ""
+        )
+        department = item.get("category", "")
+        external_id = item.get("jobId") or item.get("jobSeqNo") or title
+
+        apply_url = item.get("applyUrl", "")
+        if source.get("strip_apply_suffix", True) and apply_url.endswith("/apply"):
+            job_url = apply_url[:-6]
+        else:
+            job_url = apply_url
+
+        out.append({
+            "source_name": source["name"],
+            "source_type": "phenom_embedded",
+            "external_id": str(external_id),
+            "title": title,
+            "location": location,
+            "department": department,
+            "url": job_url,
+            "posted_at": item.get("postedDate", "") or item.get("dateCreated", ""),
+        })
+
+    return out
+
+
+def parse_workday_source(source: dict) -> tuple[str, str, str]:
+    if source.get("tenant") and source.get("site") and source.get("base_url"):
+        return source["base_url"].rstrip("/"), source["tenant"], source["site"]
+
+    url = source["url"]
+    parsed = urlparse(url)
+    host = parsed.netloc
+    path_parts = [p for p in parsed.path.split("/") if p]
+
+    if not path_parts:
+        raise ValueError("Could not determine Workday site from URL")
+
+    # Handles:
+    # /scancareers
+    # /en-US/scancareers
+    # /fr-FR/site
+    if len(path_parts) >= 2 and "-" in path_parts[0]:
+        site = path_parts[1]
+    else:
+        site = path_parts[0]
+
+    tenant = host.split(".")[0]
+    base_url = f"{parsed.scheme}://{host}"
+    return base_url, tenant, site
+
+
+def workday_extract_location(item: dict) -> str:
+    locations = item.get("locationsText")
+    if locations:
+        return locations
+
+    bullet_fields = item.get("bulletFields") or []
+    if bullet_fields:
+        return " | ".join(str(x) for x in bullet_fields if x)
+
+    locations = item.get("locations") or []
+    if isinstance(locations, list) and locations:
+        vals = []
+        for loc in locations:
+            if isinstance(loc, dict):
+                text = loc.get("displayName") or loc.get("name")
+                if text:
+                    vals.append(text)
+            elif loc:
+                vals.append(str(loc))
+        if vals:
+            return " | ".join(vals)
+
+    return ""
+
+
+def workday_extract_posted(item: dict) -> str:
+    return (
+        item.get("postedOn")
+        or item.get("postedDate")
+        or item.get("startDate")
+        or ""
+    )
+
+
+def fetch_workday(source: dict) -> List[dict]:
+    base_url, tenant, site = parse_workday_source(source)
+    endpoint = f"{base_url}/wday/cxs/{tenant}/{site}/jobs"
+
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0",
+    }
+
+    limit = int(source.get("limit", 20))
+    offset = 0
     jobs = []
 
-    link_prefix = source.get("link_prefix", "")
-    match_contains = [x.lower() for x in source.get("match_contains", ["/job/", "/jobs/"])]
-    seen_urls = set()
+    while True:
+        body = {
+            "limit": limit,
+            "offset": offset,
+            "searchText": source.get("search_text", ""),
+        }
 
-    for a in soup.find_all("a", href=True):
-        href = a["href"].strip()
-        text = " ".join(a.get_text(" ", strip=True).split())
+        # Optional filters
+        if source.get("locations"):
+            body["locations"] = source["locations"]
+        if source.get("categories"):
+            body["jobFamilies"] = source["categories"]
 
-        if not href:
-            continue
+        data = safe_post_json(endpoint, body, headers=headers)
 
-        full_url = urljoin(link_prefix or url, href)
-        full_url_lc = full_url.lower()
+        postings = (
+            data.get("jobPostings")
+            or data.get("job_postings")
+            or data.get("jobs")
+            or []
+        )
 
-        if not any(token in full_url_lc for token in match_contains):
-            continue
+        if not postings:
+            break
 
-        if full_url in seen_urls:
-            continue
-        seen_urls.add(full_url)
+        for item in postings:
+            title = item.get("title", "")
+            external_path = item.get("externalPath", "")
+            if external_path:
+                job_url = f"{base_url}/{site}/job/{external_path.lstrip('/')}"
+            else:
+                job_url = source.get("url", "")
 
-        title = text or full_url.rstrip("/").rsplit("/", 1)[-1]
-        jobs.append({
-            "source_name": source["name"],
-            "source_type": "html_search",
-            "external_id": full_url,
-            "title": title,
-            "location": "",
-            "department": "",
-            "url": full_url,
-            "posted_at": "",
-        })
+            department = ""
+            if item.get("jobFamily"):
+                department = str(item.get("jobFamily"))
+            elif item.get("jobFamilyGroup"):
+                department = str(item.get("jobFamilyGroup"))
+
+            external_id = (
+                item.get("bulletFields", [None, None])[-1]
+                or item.get("jobReqId")
+                or item.get("id")
+                or item.get("title")
+            )
+
+            jobs.append({
+                "source_name": source["name"],
+                "source_type": "workday",
+                "external_id": str(external_id),
+                "title": title,
+                "location": workday_extract_location(item),
+                "department": department,
+                "url": job_url,
+                "posted_at": workday_extract_posted(item),
+            })
+
+        total = data.get("total")
+        offset += len(postings)
+
+        if total is not None and offset >= total:
+            break
+        if len(postings) < limit:
+            break
+
+        time.sleep(0.2)
 
     return jobs
 
@@ -226,8 +412,10 @@ def fetch_jobs_for_source(source: dict) -> List[dict]:
         return fetch_lever(source)
     if stype == "ashby":
         return fetch_ashby(source)
-    if stype == "html_search":
-        return fetch_html_search(source)
+    if stype == "phenom_embedded":
+        return fetch_phenom_embedded(source)
+    if stype == "workday":
+        return fetch_workday(source)
     raise ValueError(f"Unsupported source type: {stype}")
 
 
