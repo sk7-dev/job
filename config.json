@@ -25,20 +25,16 @@
       "board_token": "cascadeloans"
     },
     {
-     "name": "SCAN Health Plan",
-     "type": "workday",
-     "host": "scanhealthplan.wd108.myworkdayjobs.com",
-     "career_site": "scancareers"
+      "name": "Skechers Data Search",
+      "type": "phenom_embedded",
+      "url": "https://careers.skechers.com/us/en/search-results?keywords=data",
+      "strip_apply_suffix": true
     },
     {
-      "name": "Skechers Data Search",
-      "type": "html_search",
-      "url": "https://careers.skechers.com/us/en/search-results?keywords=data",
-      "link_prefix": "https://careers.skechers.com",
-      "match_contains": [
-        "/job/",
-        "/jobs/"
-      ]
+      "name": "SCAN Careers",
+      "type": "workday",
+      "url": "https://scanhealthplan.wd108.myworkdayjobs.com/scancareers",
+      "search_text": "data"
     }
   ]
 }
