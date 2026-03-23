@@ -2,10 +2,9 @@ import json
 import os
 import sys
 import time
-from typing import Dict, List, Optional
+from typing import Optional, List
 
 import requests
-
 
 CONFIG_PATH = "config.json"
 STATE_PATH = "state_seen.json"
@@ -47,21 +46,14 @@ def matches_filters(job: dict, filters: dict) -> bool:
     return title_ok and location_ok
 
 
-def safe_get(url: str, params: Optional[dict] = None, headers: Optional[dict] = None) -> dict:
-    resp = requests.get(url, params=params, headers=headers, timeout=REQUEST_TIMEOUT)
-    resp.raise_for_status()
-    return resp.json()
-
-
-def safe_post(url: str, json_body: dict, headers: Optional[dict] = None) -> dict:
-    resp = requests.post(url, json=json_body, headers=headers, timeout=REQUEST_TIMEOUT)
+def safe_get(url: str, params: Optional[dict] = None) -> dict:
+    resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     return resp.json()
 
 
 def fetch_greenhouse(source: dict) -> List[dict]:
     token = source["board_token"]
-    # Greenhouse Job Board API
     url = f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs"
     data = safe_get(url)
 
@@ -74,104 +66,16 @@ def fetch_greenhouse(source: dict) -> List[dict]:
         departments = item.get("departments") or []
         department = ", ".join(d.get("name", "") for d in departments if d.get("name"))
 
-        offices = item.get("offices") or []
-        office = ", ".join(o.get("name", "") for o in offices if o.get("name"))
-
         jobs.append({
             "source_name": source["name"],
             "source_type": "greenhouse",
             "external_id": str(item.get("id")),
             "title": item.get("title", ""),
-            "location": location or office,
-            "department": department,
-            "url": item.get("absolute_url", ""),
-            "posted_at": "",
-        })
-    return jobs
-
-
-def fetch_lever(source: dict) -> List[dict]:
-    company = source["company"]
-    # Lever public postings endpoint
-    url = f"https://api.lever.co/v0/postings/{company}"
-    params = {"mode": "json"}
-    data = safe_get(url, params=params)
-
-    jobs = []
-    for item in data:
-        categories = item.get("categories") or {}
-        location = categories.get("location", "") or item.get("categories", {}).get("team", "")
-        department = categories.get("team", "")
-
-        hosted_url = item.get("hostedUrl") or item.get("applyUrl") or ""
-        jobs.append({
-            "source_name": source["name"],
-            "source_type": "lever",
-            "external_id": str(item.get("id")),
-            "title": item.get("text", ""),
             "location": location,
             "department": department,
-            "url": hosted_url,
-            "posted_at": item.get("createdAt", ""),
+            "url": item.get("absolute_url", "")
         })
     return jobs
-
-
-def fetch_ashby(source: dict) -> List[dict]:
-    # Ashby public job postings API
-    # Many public career pages use this endpoint pattern.
-    url = source.get("api_url", "https://api.ashbyhq.com/jobPosting.list")
-    body = {
-        "organizationHostedJobsPageName": source["organization_key"],
-        "listedOnly": True
-    }
-    data = safe_post(url, body)
-
-    jobs = []
-    for item in data.get("results", []):
-        location_parts = []
-
-        location_obj = item.get("location")
-        if isinstance(location_obj, dict):
-            for key in ("locationSummary", "city", "region", "country"):
-                val = location_obj.get(key)
-                if val:
-                    location_parts.append(str(val))
-
-        location = " / ".join(dict.fromkeys(location_parts))
-
-        department = ""
-        departments = item.get("department") or item.get("departments") or []
-        if isinstance(departments, list):
-            if departments and isinstance(departments[0], dict):
-                department = ", ".join(d.get("name", "") for d in departments if d.get("name"))
-            else:
-                department = ", ".join(str(x) for x in departments if x)
-        elif isinstance(departments, dict):
-            department = departments.get("name", "")
-
-        jobs.append({
-            "source_name": source["name"],
-            "source_type": "ashby",
-            "external_id": str(item.get("id") or item.get("jobPostingId") or item.get("title", "")),
-            "title": item.get("title", ""),
-            "location": location,
-            "department": department,
-            "url": item.get("jobUrl") or item.get("applicationUrl") or "",
-            "posted_at": item.get("publishedAt", ""),
-        })
-    return jobs
-
-
-def fetch_jobs_for_source(source: dict) -> List[dict]:
-    stype = source["type"].lower()
-    if stype == "greenhouse":
-        return fetch_greenhouse(source)
-    if stype == "lever":
-        return fetch_lever(source)
-    if stype == "ashby":
-        return fetch_ashby(source)
-    raise ValueError(f"Unsupported source type: {stype}")
 
 
 def stable_job_key(job: dict) -> str:
@@ -183,26 +87,21 @@ def stable_job_key(job: dict) -> str:
     ])
 
 
-def format_slack_text(new_jobs: List[dict]) -> str:
-    lines = [f"*{len(new_jobs)} new matching job(s) found:*"]
-    for job in new_jobs[:25]:
-        line = (
-            f"• *{job['title']}* — {job['source_name']} | "
-            f"{job.get('location','')} | {job.get('department','')}\n"
-            f"  {job['url']}"
+def format_discord_text(new_jobs: List[dict]) -> str:
+    lines = [f"{len(new_jobs)} new matching job(s) found:"]
+    for job in new_jobs[:10]:
+        lines.append(
+            f"- {job['title']} | {job['source_name']} | {job.get('location','')} | {job['url']}"
         )
-        lines.append(line)
-
-    if len(new_jobs) > 25:
-        lines.append(f"...and {len(new_jobs) - 25} more.")
-
+    if len(new_jobs) > 10:
+        lines.append(f"...and {len(new_jobs) - 10} more.")
     return "\n".join(lines)
 
 
-def send_slack(webhook_url: str, text: str) -> None:
+def send_discord(webhook_url: str, text: str) -> None:
     resp = requests.post(
         webhook_url,
-        json={"text": text},
+        json={"content": text},
         timeout=REQUEST_TIMEOUT,
         headers={"Content-Type": "application/json"},
     )
@@ -222,7 +121,7 @@ def main() -> int:
 
     for source in sources:
         try:
-            jobs = fetch_jobs_for_source(source)
+            jobs = fetch_greenhouse(source)
             all_jobs.extend(jobs)
             time.sleep(0.5)
         except Exception as e:
@@ -245,21 +144,17 @@ def main() -> int:
     print(f"New jobs: {len(new_jobs)}")
 
     if errors:
-        print("Errors:")
+        print("Errors:", file=sys.stderr)
         for err in errors:
             print(f" - {err}", file=sys.stderr)
 
-    slack_webhook = os.getenv("SLACK_WEBHOOK_URL")
-    if new_jobs and slack_webhook:
-        text = format_slack_text(new_jobs)
-        send_slack(slack_webhook, text)
-        print("Slack alert sent.")
+    webhook = os.getenv("DISCORD_WEBHOOK_URL")
+    if new_jobs and webhook:
+        send_discord(webhook, format_discord_text(new_jobs))
+        print("Discord alert sent.")
     elif new_jobs:
-        print("New jobs found, but SLACK_WEBHOOK_URL is not configured.")
-        for job in new_jobs:
-            print(job["title"], "-", job["url"])
+        print("New jobs found, but DISCORD_WEBHOOK_URL is not configured.")
 
-    # Fail only if every source failed
     if errors and not all_jobs:
         return 1
     return 0
