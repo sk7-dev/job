@@ -18,7 +18,8 @@
       "california",
       "new york",
       "seattle",
-      "san francisco"
+      "san francisco",
+      "texas"
     ],
     "excluded_keywords_any": [
       "vp",
@@ -33,6 +34,11 @@
       "type": "greenhouse",
       "board_token": "cascadeloans"
     },
+    {
+      "name": "Qualified Health",
+      "type": "greenhouse",
+      "board_token": "qualifiedhealth"
+    },   
     {
       "name": "Skechers Data Search",
       "type": "phenom_embedded",
